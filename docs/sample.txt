@@ -1,0 +1,9 @@
+Cloud Document Analyzer
+
+This is a test document for our AWS project.
+
+The system will eventually process documents using:
+- Amazon S3 for storage
+- AWS Lambda for event-driven processing
+- Amazon Bedrock for AI-powered document analysis
+- Amazon DynamoDB for structured results
