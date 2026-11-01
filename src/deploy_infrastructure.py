@@ -73,23 +73,25 @@ def load_or_create_bucket_name(session):
     return bucket_name
 
 
+
 def create_lambda_package():
-    """Package the Lambda source files into a ZIP archive."""
+    """Package all Lambda source files into a versioned ZIP archive."""
 
     os.makedirs(BUILD_DIR, exist_ok=True)
 
-    zip_path = os.path.join(
+    temporary_zip = os.path.join(
         BUILD_DIR,
-        "lambda_package.zip"
+        "lambda_package_temp.zip"
     )
 
     with zipfile.ZipFile(
-        zip_path,
+        temporary_zip,
         "w",
         compression=zipfile.ZIP_DEFLATED
     ) as zip_file:
 
         for filename in sorted(os.listdir(LAMBDA_SOURCE_DIR)):
+
             file_path = os.path.join(
                 LAMBDA_SOURCE_DIR,
                 filename
@@ -101,15 +103,23 @@ def create_lambda_package():
                     arcname=filename
                 )
 
-    with open(zip_path, "rb") as file:
+    with open(temporary_zip, "rb") as file:
         package_hash = hashlib.sha256(file.read()).hexdigest()[:12]
 
     s3_key = f"deployments/lambda_package_{package_hash}.zip"
+
+    zip_path = os.path.join(
+        BUILD_DIR,
+        f"lambda_package_{package_hash}.zip"
+    )
+
+    os.replace(temporary_zip, zip_path)
 
     print(f"Lambda package created: {zip_path}")
     print(f"Package SHA-256: {package_hash}")
 
     return zip_path, s3_key
+
 
 
 def stack_exists(cf, stack_name):

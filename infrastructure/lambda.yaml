@@ -82,6 +82,64 @@ Resources:
       Principal: s3.amazonaws.com
       SourceArn: !Sub "arn:${AWS::Partition}:s3:::${S3BucketName}"
       SourceAccount: !Ref AWS::AccountId
+  
+
+  UploadUrlExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-upload-url-role"
+
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+      Policies:
+        - PolicyName: GeneratePresignedUploadUrl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${S3BucketName}/uploads/*"
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-url:*"
+
+  UploadUrlLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-upload-url"
+      RetentionInDays: 7
+
+  UploadUrlGenerator:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - UploadUrlLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-upload-url"
+      Runtime: python3.11
+      Handler: upload_url_handler.lambda_handler
+      Role: !GetAtt UploadUrlExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref S3BucketName
+
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref LambdaCodeS3Key
 
 Outputs:
   LambdaFunctionName:
@@ -95,3 +153,11 @@ Outputs:
   LambdaExecutionRoleArn:
     Description: Lambda execution role ARN
     Value: !GetAtt LambdaExecutionRole.Arn
+  
+  UploadUrlFunctionName:
+    Description: Upload URL generator Lambda function name
+    Value: !Ref UploadUrlGenerator
+
+  UploadUrlFunctionArn:
+    Description: Upload URL generator Lambda function ARN
+    Value: !GetAtt UploadUrlGenerator.Arn
