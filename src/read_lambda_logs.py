@@ -1,41 +1,36 @@
+
 import boto3
-import time
+from datetime import datetime, timedelta, timezone
 
 from config import AWS_PROFILE, AWS_REGION
 
 LOG_GROUP = "/aws/lambda/cloud-document-analyzer-processor"
 
+session = boto3.Session(
+    profile_name=AWS_PROFILE,
+    region_name=AWS_REGION
+)
 
-def main():
-    session = boto3.Session(
-        profile_name=AWS_PROFILE,
-        region_name=AWS_REGION
-    )
+logs = session.client("logs")
 
-    logs = session.client("logs")
+start_time = int(
+    (datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp() * 1000
+)
 
-    end_time = int(time.time() * 1000)
-    start_time = end_time - (5 * 60 * 1000)
+response = logs.filter_log_events(
+    logGroupName=LOG_GROUP,
+    startTime=start_time
+)
 
-    response = logs.filter_log_events(
-        logGroupName=LOG_GROUP,
-        startTime=start_time,
-        endTime=end_time,
-        limit=50
-    )
+events = response.get("events", [])
 
-    events = response.get("events", [])
-
-    print(f"Events found: {len(events)}\n")
-
+if not events:
+    print("No Lambda logs found in the last 5 minutes.")
+else:
     for event in events:
-        timestamp = time.strftime(
-            "%H:%M:%S",
-            time.localtime(event["timestamp"] / 1000)
+        timestamp = datetime.fromtimestamp(
+            event["timestamp"] / 1000,
+            tz=timezone.utc
         )
 
-        print(f"[{timestamp}] {event['message'].strip()}")
-
-
-if __name__ == "__main__":
-    main()
+        print(f"[{timestamp.isoformat()}] {event['message']}")

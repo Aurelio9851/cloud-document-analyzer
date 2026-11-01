@@ -33,6 +33,9 @@ def lambda_handler(event, context):
                 bucket=bucket,
                 object_key=object_key
             )
+            
+            print("Document processing result:")
+            print(json.dumps(result, indent=2))
 
             results.append(result)
 
