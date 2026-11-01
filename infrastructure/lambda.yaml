@@ -1,7 +1,8 @@
+
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  Cloud Document Analyzer - Lambda infrastructure.
+  Cloud Document Analyzer - Lambda processing infrastructure.
 
 Parameters:
   ProjectName:
@@ -10,7 +11,6 @@ Parameters:
 
   S3BucketName:
     Type: String
-    Default: cloud-document-analyzer-1793537371
 
   LambdaCodeS3Key:
     Type: String
@@ -73,6 +73,15 @@ Resources:
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: !Ref LambdaCodeS3Key
+
+  AllowS3InvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DocumentProcessor
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:s3:::${S3BucketName}"
+      SourceAccount: !Ref AWS::AccountId
 
 Outputs:
   LambdaFunctionName:

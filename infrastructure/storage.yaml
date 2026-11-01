@@ -1,0 +1,54 @@
+
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Cloud Document Analyzer - S3 storage infrastructure.
+
+Parameters:
+  S3BucketName:
+    Type: String
+
+  LambdaFunctionArn:
+    Type: String
+    Default: ""
+
+Conditions:
+  EnableNotifications: !Not
+    - !Equals
+      - !Ref LambdaFunctionArn
+      - ""
+
+Resources:
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+      NotificationConfiguration:
+        Fn::If:
+          - EnableNotifications
+          - LambdaConfigurations:
+              - Event: s3:ObjectCreated:*
+                Function: !Ref LambdaFunctionArn
+                Filter:
+                  S3Key:
+                    Rules:
+                      - Name: prefix
+                        Value: uploads/
+          - !Ref AWS::NoValue
+
+Outputs:
+  S3BucketName:
+    Description: Document storage bucket
+    Value: !Ref DocumentBucket

@@ -1,5 +1,8 @@
+
 import hashlib
+import json
 import os
+import uuid
 import zipfile
 
 import boto3
@@ -8,15 +11,25 @@ from botocore.exceptions import ClientError
 from config import (
     AWS_PROFILE,
     AWS_REGION,
-    S3_BUCKET_NAME,
     PROJECT_ROOT
 )
 
-STACK_NAME = "cloud-document-analyzer-stack"
 
-TEMPLATE_PATH = os.path.join(
+STORAGE_STACK_NAME = "cloud-document-analyzer-storage-stack"
+APP_STACK_NAME = "cloud-document-analyzer-stack"
+
+INFRASTRUCTURE_DIR = os.path.join(
     PROJECT_ROOT,
-    "infrastructure",
+    "infrastructure"
+)
+
+STORAGE_TEMPLATE_PATH = os.path.join(
+    INFRASTRUCTURE_DIR,
+    "storage.yaml"
+)
+
+LAMBDA_TEMPLATE_PATH = os.path.join(
+    INFRASTRUCTURE_DIR,
     "lambda.yaml"
 )
 
@@ -27,10 +40,41 @@ LAMBDA_SOURCE_DIR = os.path.join(
 )
 
 BUILD_DIR = os.path.join(PROJECT_ROOT, "build")
+STATE_PATH = os.path.join(BUILD_DIR, "deployment_state.json")
+
+
+def load_or_create_bucket_name(session):
+    """Retrieve the existing bucket name or generate a unique one."""
+
+    os.makedirs(BUILD_DIR, exist_ok=True)
+
+    if os.path.exists(STATE_PATH):
+        with open(STATE_PATH, "r", encoding="utf-8") as file:
+            state = json.load(file)
+
+        bucket_name = state["bucket_name"]
+        print(f"Using existing bucket name: {bucket_name}")
+        return bucket_name
+
+    account_id = session.client("sts").get_caller_identity()["Account"]
+    suffix = uuid.uuid4().hex[:8]
+
+    bucket_name = f"cloud-document-analyzer-{account_id}-{suffix}"
+
+    state = {
+        "bucket_name": bucket_name
+    }
+
+    with open(STATE_PATH, "w", encoding="utf-8") as file:
+        json.dump(state, file, indent=4)
+
+    print(f"Generated bucket name: {bucket_name}")
+
+    return bucket_name
 
 
 def create_lambda_package():
-    """Create a ZIP containing the Lambda source files."""
+    """Package the Lambda source files into a ZIP archive."""
 
     os.makedirs(BUILD_DIR, exist_ok=True)
 
@@ -68,56 +112,33 @@ def create_lambda_package():
     return zip_path, s3_key
 
 
-def upload_lambda_package(s3, zip_path, s3_key):
-    """Upload the Lambda ZIP package to S3."""
-
-    print(f"Uploading package to s3://{S3_BUCKET_NAME}/{s3_key}")
-
-    s3.upload_file(
-        zip_path,
-        S3_BUCKET_NAME,
-        s3_key,
-        ExtraArgs={
-            "ServerSideEncryption": "AES256"
-        }
-    )
-
-    print("Lambda package uploaded successfully.")
-
-
-def deploy_stack(cf, s3_key):
-    """Create or update the CloudFormation stack."""
-
-    with open(TEMPLATE_PATH, "r", encoding="utf-8") as file:
-        template_body = file.read()
-
-    parameters = [
-        {
-            "ParameterKey": "S3BucketName",
-            "ParameterValue": S3_BUCKET_NAME
-        },
-        {
-            "ParameterKey": "LambdaCodeS3Key",
-            "ParameterValue": s3_key
-        }
-    ]
+def stack_exists(cf, stack_name):
+    """Check whether a CloudFormation stack exists."""
 
     try:
-        cf.describe_stacks(StackName=STACK_NAME)
-        stack_exists = True
+        cf.describe_stacks(StackName=stack_name)
+        return True
 
     except ClientError as error:
         if error.response["Error"]["Code"] == "ValidationError":
-            stack_exists = False
-        else:
-            raise
+            return False
+        raise
 
-    if stack_exists:
-        print(f"Updating stack: {STACK_NAME}")
+
+def deploy_stack(cf, stack_name, template_path, parameters):
+    """Create or update a CloudFormation stack."""
+
+    with open(template_path, "r", encoding="utf-8") as file:
+        template_body = file.read()
+
+    exists = stack_exists(cf, stack_name)
+
+    if exists:
+        print(f"\nUpdating stack: {stack_name}")
 
         try:
             cf.update_stack(
-                StackName=STACK_NAME,
+                StackName=stack_name,
                 TemplateBody=template_body,
                 Parameters=parameters,
                 Capabilities=["CAPABILITY_NAMED_IAM"]
@@ -127,16 +148,16 @@ def deploy_stack(cf, s3_key):
 
         except ClientError as error:
             if "No updates are to be performed" in str(error):
-                print("CloudFormation reports that no updates are needed.")
+                print("No CloudFormation changes required.")
                 return
 
             raise
 
     else:
-        print(f"Creating stack: {STACK_NAME}")
+        print(f"\nCreating stack: {stack_name}")
 
         cf.create_stack(
-            StackName=STACK_NAME,
+            StackName=stack_name,
             TemplateBody=template_body,
             Parameters=parameters,
             Capabilities=["CAPABILITY_NAMED_IAM"]
@@ -145,19 +166,46 @@ def deploy_stack(cf, s3_key):
         waiter = cf.get_waiter("stack_create_complete")
 
     print("Waiting for CloudFormation...")
-    waiter.wait(StackName=STACK_NAME)
+    waiter.wait(StackName=stack_name)
 
-    print("Infrastructure deployed successfully!")
+    print(f"Stack deployed successfully: {stack_name}")
 
 
-def print_stack_outputs(cf):
-    response = cf.describe_stacks(StackName=STACK_NAME)
+def upload_lambda_package(s3, bucket_name, zip_path, s3_key):
+    """Upload the Lambda deployment package to S3."""
 
-    for output in response["Stacks"][0].get("Outputs", []):
-        print(f"{output['OutputKey']}: {output['OutputValue']}")
+    print(f"\nUploading package to s3://{bucket_name}/{s3_key}")
+
+    s3.upload_file(
+        zip_path,
+        bucket_name,
+        s3_key,
+        ExtraArgs={
+            "ServerSideEncryption": "AES256"
+        }
+    )
+
+    print("Lambda package uploaded successfully.")
+
+
+def get_stack_output(cf, stack_name, output_key):
+    """Retrieve a CloudFormation stack output."""
+
+    response = cf.describe_stacks(StackName=stack_name)
+
+    outputs = response["Stacks"][0].get("Outputs", [])
+
+    for output in outputs:
+        if output["OutputKey"] == output_key:
+            return output["OutputValue"]
+
+    raise RuntimeError(
+        f"Output '{output_key}' not found in stack '{stack_name}'."
+    )
 
 
 def main():
+
     session = boto3.Session(
         profile_name=AWS_PROFILE,
         region_name=AWS_REGION
@@ -166,20 +214,79 @@ def main():
     s3 = session.client("s3")
     cf = session.client("cloudformation")
 
+    bucket_name = load_or_create_bucket_name(session)
+
+    # Phase 1: Create the S3 bucket.
+    deploy_stack(
+        cf=cf,
+        stack_name=STORAGE_STACK_NAME,
+        template_path=STORAGE_TEMPLATE_PATH,
+        parameters=[
+            {
+                "ParameterKey": "S3BucketName",
+                "ParameterValue": bucket_name
+            },
+            {
+                "ParameterKey": "LambdaFunctionArn",
+                "ParameterValue": ""
+            }
+        ]
+    )
+
+    # Phase 2: Build and upload the Lambda package.
     zip_path, s3_key = create_lambda_package()
 
     upload_lambda_package(
         s3=s3,
+        bucket_name=bucket_name,
         zip_path=zip_path,
         s3_key=s3_key
     )
 
+    # Phase 3: Deploy Lambda infrastructure.
     deploy_stack(
         cf=cf,
-        s3_key=s3_key
+        stack_name=APP_STACK_NAME,
+        template_path=LAMBDA_TEMPLATE_PATH,
+        parameters=[
+            {
+                "ParameterKey": "S3BucketName",
+                "ParameterValue": bucket_name
+            },
+            {
+                "ParameterKey": "LambdaCodeS3Key",
+                "ParameterValue": s3_key
+            }
+        ]
     )
 
-    print_stack_outputs(cf)
+    # Retrieve the deployed Lambda ARN.
+    lambda_arn = get_stack_output(
+        cf,
+        APP_STACK_NAME,
+        "LambdaFunctionArn"
+    )
+
+    # Phase 4: Configure S3 -> Lambda notifications.
+    deploy_stack(
+        cf=cf,
+        stack_name=STORAGE_STACK_NAME,
+        template_path=STORAGE_TEMPLATE_PATH,
+        parameters=[
+            {
+                "ParameterKey": "S3BucketName",
+                "ParameterValue": bucket_name
+            },
+            {
+                "ParameterKey": "LambdaFunctionArn",
+                "ParameterValue": lambda_arn
+            }
+        ]
+    )
+
+    print("\nDeployment completed successfully.")
+    print(f"S3 bucket: {bucket_name}")
+    print(f"Lambda ARN: {lambda_arn}")
 
 
 if __name__ == "__main__":
