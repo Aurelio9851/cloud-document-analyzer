@@ -1,17 +1,32 @@
-def process_document(s3_client, bucket, object_key):
+import json
+import os
+import boto3
 
-    response = s3_client.get_object(
-        Bucket=bucket,
-        Key=object_key
+from document_processor import process_document
+
+s3 = boto3.client("s3")
+
+
+def lambda_handler(event, context):
+
+    print("Received event:")
+    print(json.dumps(event))
+
+    bucket = event.get("bucket", os.environ["BUCKET_NAME"])
+    object_key = event["object_key"]
+
+    print(f"Processing s3://{bucket}/{object_key}")
+
+    result = process_document(
+        s3_client=s3,
+        bucket=bucket,
+        object_key=object_key
     )
 
-    content = response["Body"].read().decode("utf-8")
+    print("Document processed:")
+    print(json.dumps(result))
 
-    result = {
-        "bucket": bucket,
-        "object_key": object_key,
-        "content_length": len(content),
-        "preview": content[:200]
+    return {
+        "statusCode": 200,
+        "body": json.dumps(result)
     }
-
-    return result
