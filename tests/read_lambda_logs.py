@@ -20,7 +20,7 @@ session = boto3.Session(
 logs = session.client("logs")
 
 start_time = int(
-    (datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp() * 1000
+    (datetime.now(timezone.utc) - timedelta(hours=1)).timestamp() * 1000
 )
 
 response = logs.filter_log_events(
@@ -31,7 +31,7 @@ response = logs.filter_log_events(
 events = response.get("events", [])
 
 if not events:
-    print("No Lambda logs found in the last 5 minutes.")
+    print("No Lambda logs found in the last 1 hour.")
 else:
     for event in events:
         timestamp = datetime.fromtimestamp(

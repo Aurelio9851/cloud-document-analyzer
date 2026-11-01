@@ -4,7 +4,17 @@ import os
 import boto3
 import re
 
-s3 = boto3.client("s3")
+from botocore.config import Config
+
+s3 = boto3.client(
+    "s3",
+    config=Config(
+        region_name=os.environ.get("AWS_REGION", "eu-west-1"),
+        s3={
+            "addressing_style": "virtual"
+        }
+    )
+)
 
 BUCKET_NAME = os.environ["BUCKET_NAME"]
 UPLOAD_PREFIX = "uploads/"
@@ -40,11 +50,14 @@ def lambda_handler(event, context):
 
         object_key = f"{UPLOAD_PREFIX}{filename}"
 
+        content_type = "text/plain"
+
         presigned_url = s3.generate_presigned_url(
             ClientMethod="put_object",
             Params={
                 "Bucket": BUCKET_NAME,
-                "Key": object_key
+                "Key": object_key,
+                "ContentType": content_type
             },
             ExpiresIn=300
         )
@@ -57,7 +70,8 @@ def lambda_handler(event, context):
             "body": json.dumps({
                 "upload_url": presigned_url,
                 "object_key": object_key,
-                "expires_in": 300
+                "expires_in": 300,
+                "content_type": content_type
             })
         }
 
