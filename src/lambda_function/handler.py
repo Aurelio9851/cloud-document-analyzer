@@ -1,3 +1,4 @@
+
 import json
 import os
 import boto3
@@ -5,13 +6,16 @@ import boto3
 from urllib.parse import unquote_plus
 from document_processor import process_document
 
-s3 = boto3.client("s3")
+textract = boto3.client("textract")
 
 
 def lambda_handler(event, context):
 
     print("Received event:")
     print(json.dumps(event))
+
+    notification_topic_arn = os.environ["TEXTRACT_NOTIFICATION_TOPIC_ARN"]
+    notification_role_arn = os.environ["TEXTRACT_NOTIFICATION_ROLE_ARN"]
 
     # Handle native S3 events
     if "Records" in event:
@@ -26,15 +30,17 @@ def lambda_handler(event, context):
                 record["s3"]["object"]["key"]
             )
 
-            print(f"Processing s3://{bucket}/{object_key}")
+            print(f"Starting Textract analysis for s3://{bucket}/{object_key}")
 
             result = process_document(
-                s3_client=s3,
+                textract_client=textract,
                 bucket=bucket,
-                object_key=object_key
+                object_key=object_key,
+                notification_topic_arn=notification_topic_arn,
+                notification_role_arn=notification_role_arn
             )
-            
-            print("Document processing result:")
+
+            print("Textract job started:")
             print(json.dumps(result, indent=2))
 
             results.append(result)
@@ -49,9 +55,11 @@ def lambda_handler(event, context):
     object_key = event["object_key"]
 
     result = process_document(
-        s3_client=s3,
+        textract_client=textract,
         bucket=bucket,
-        object_key=object_key
+        object_key=object_key,
+        notification_topic_arn=notification_topic_arn,
+        notification_role_arn=notification_role_arn
     )
 
     return {
